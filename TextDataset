@@ -1,0 +1,102 @@
+import pandas as pd
+import mysql.connector
+from mysql.connector import Error
+
+def insert_data_from_csv(csv_file_path, db_config, table_name):
+    conn = None
+    cursor = None
+    try:
+        df = pd.read_csv(csv_file_path)
+
+        print(f"1. CSV 파일 로드 직후 df.columns: {df.columns.tolist()}")
+
+        # 'nan' 또는 'Unnamed' 컬럼 제거 로직
+        if 'nan' in df.columns:
+            print("!!! 경고: 'nan'이라는 컬럼명이 df.columns에서 직접 감지되었습니다. 제거합니다. !!!")
+            df = df.drop(columns=['nan'])
+            print(f"2. 'nan' 컬럼 제거 후 df.columns: {df.columns.tolist()}")
+        
+        unnamed_cols = [col for col in df.columns if col.startswith('Unnamed:')]
+        if unnamed_cols:
+            print(f"!!! 경고: 'Unnamed' 컬럼 {unnamed_cols} 이(가) 감지되었습니다. 제거합니다. !!!")
+            df = df.drop(columns=unnamed_cols)
+            print(f"3. 'Unnamed' 컬럼 제거 후 df.columns: {df.columns.tolist()}")
+
+        # ---!!! 핵심 수정: 데이터 값을 명시적으로 처리 !!!---
+        # 모든 값을 문자열로 변환하고, 'nan' 문자열을 None으로 처리합니다.
+        # 이 방법은 데이터 타입 유추에 영향을 줄 수 있으므로 최후의 수단으로 사용합니다.
+        df = df.astype(str) # 모든 컬럼을 문자열로 강제 변환
+        df = df.replace('nan', None) # 문자열 'nan'을 None으로 대체
+        df = df.replace('', None) # 빈 문자열도 None으로 대체 (기존 df.fillna('') 대신)
+        # ---!!! 여기까지 수정 !!!---
+
+        # MySQL 연결
+        conn = mysql.connector.connect(**db_config)
+        if conn.is_connected():
+            cursor = conn.cursor()
+            print("4. MySQL 데이터베이스에 성공적으로 연결되었습니다.")
+
+            # DB 테이블의 실제 컬럼 이름 가져오기
+            cursor.execute(f"DESCRIBE `{table_name}`")
+            db_columns_info = cursor.fetchall()
+            db_column_names = [col[0] for col in db_columns_info]
+            print(f"5. DB 테이블 '{table_name}'의 실제 컬럼: {db_column_names}")
+
+            # CSV DataFrame 컬럼 중 DB 컬럼과 일치하는 것만 필터링
+            valid_columns = [col for col in df.columns if col in db_column_names]
+            print(f"6. DB에 존재하는 유효한 CSV 컬럼 (필터링 후): {valid_columns}")
+
+            if not valid_columns:
+                raise ValueError("CSV 파일의 컬럼 중 데이터베이스 테이블에 존재하는 컬럼이 없습니다. 컬럼 이름 일치를 확인하세요.")
+
+            # 유효한 컬럼 이름만 백틱으로 묶어서 SQL 쿼리용 문자열 생성
+            quoted_columns = [f"`{col}`" for col in valid_columns]
+            columns_sql = ', '.join(quoted_columns)
+            
+            # 플레이스홀더 준비
+            placeholders = ', '.join(['%s'] * len(valid_columns))
+            
+            # INSERT 쿼리 문자열 생성
+            insert_query = f"INSERT INTO `{table_name}` ({columns_sql}) VALUES ({placeholders})"
+            print(f"7. 최종 생성된 INSERT 쿼리: {insert_query}")
+
+            # 데이터프레임에서 유효한 컬럼에 해당하는 데이터만 선택하여 삽입
+            data_to_insert = []
+            for index, row in df[valid_columns].iterrows():
+                data_to_insert.append(tuple(row)) # 여기서 각 원소는 문자열 또는 None이 됨
+            
+            cursor.executemany(insert_query, data_to_insert)
+            
+            conn.commit()
+            print(f"8. {cursor.rowcount} records inserted into {table_name} successfully.")
+
+    except Error as e:
+        print(f"Error while connecting to MySQL or inserting data: {e}")
+        # 오류 메시지 상세 출력
+        if hasattr(e, 'msg'):
+            print(f"상세 MySQL 오류 메시지: {e.msg}")
+    except ValueError as ve:
+        print(f"데이터 처리 오류: {ve}")
+    finally:
+        if conn and conn.is_connected():
+            if cursor:
+                cursor.close()
+            conn.close()
+            print("MySQL connection is closed.")
+
+# 데이터베이스 연결 설정
+db_config = {
+    'host': '호스트',
+    'database': '데이터베이스',
+    'user': '사용자',
+    'password': '비밀번호'
+}
+
+# CSV 파일 경로
+csv_file = '파일 경로'
+
+# 데이터를 삽입할 테이블 이름
+target_table = '테이블 이름'
+
+# 함수 호출
+insert_data_from_csv(csv_file, db_config, target_table)
