@@ -1,0 +1,85 @@
+import sqlite3
+import os
+from sqlite3 import Error
+
+def upload_images_from_directory_sqlite(directory):
+    connection = None
+    
+    # ----------------------------------------------------
+    # 이 부분을 수정합니다: 원하는 특정 경로를 직접 지정합니다.
+    # 단, 'C:\ProgramFiles\'는 관리자 권한이 필요할 수 있습니다.
+    # 일반적인 경우, 사용자 폴더 내의 경로를 사용하는 것을 권장합니다.
+    # 예시: custom_db_path = "C:/Users/aj412/Documents/MyAppData/testDB.db"
+    # ----------------------------------------------------
+    custom_db_directory = "디렉토리_경로" # 원하는 디렉토리 경로
+    db_file_name = '데이터베이스_이름'                       # 파일 이름
+    full_db_path = os.path.join(custom_db_directory, db_file_name)
+
+    # 디렉토리가 존재하지 않으면 생성합니다.
+    os.makedirs(custom_db_directory, exist_ok=True)
+    
+    try:
+        print(f"Attempting to connect to SQLite database at: {full_db_path}")
+
+        connection = sqlite3.connect(full_db_path)
+        cursor = connection.cursor()
+
+        # 테이블 생성 (없으면 생성)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS 테이블_이름 (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                image_path BLOB
+            )
+        """)
+        print("Table '테이블이름' checked/created successfully with specified schema.")
+
+        # SQL INSERT 쿼리
+        sql_insert_blob_query = """ INSERT INTO 테이블_이름 (데이터_이름) VALUES (?)"""
+
+        images_processed = 0
+        print(f"Scanning directory: {directory}")
+        for filename in os.listdir(directory):
+            if filename.lower().endswith((".jpg", ".png", ".jpeg", ".gif", ".bmp")):
+                full_path = os.path.join(directory, filename)
+                print(f"Processing file: {full_path}")
+
+                try:
+                    with open(full_path, 'rb') as file:
+                        binary_data = file.read()
+                        cursor.execute(sql_insert_blob_query, (binary_data,))
+                        images_processed += 1
+                except IOError as e:
+                    print(f"Error: Could not read file {full_path}: {e}")
+                    continue
+
+        connection.commit()
+        print(f"Successfully processed and committed {images_processed} images to SQLite!")
+
+        print("\n--- Verifying inserted data ---")
+        cursor.execute("SELECT 데이터_이름 FROM 테이블_이름")
+        count = cursor.fetchone()[0]
+        print(f"Number of rows in archive_all table: {count}")
+
+        cursor.execute("SELECT 데이터_이름 FROM 테이블_이름 LIMIT 1")
+        first_image_data = cursor.fetchone()
+        if first_image_data and first_image_data[0]:
+            print(f"First image data retrieved (first 20 bytes): {first_image_data[0][:20]}...")
+        else:
+            print("No image data found in the table, or the retrieved data is empty.")
+        print("--- Verification complete ---\n")
+
+    except Error as e:
+        print(f"Error while connecting to SQLite or processing images: {e}")
+        if connection:
+            connection.rollback()
+            print("Transaction rolled back due to an error.")
+
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()
+            print("SQLite connection is closed")
+            print(f"Database file used: {full_db_path}")
+
+# 이미지가 저장된 디렉토리 경로를 지정하세요
+upload_images_from_directory_sqlite("데이터셋_경로")
